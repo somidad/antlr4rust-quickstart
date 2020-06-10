@@ -4,8 +4,7 @@ extern crate lazy_static;
 
 use antlr_rust::common_token_stream::CommonTokenStream;
 use antlr_rust::input_stream::InputStream;
-use antlr_rust::parser_rule_context::ParserRuleContext;
-use antlr_rust::tree::{ErrorNode, ParseTree, ParseTreeListener, TerminalNode};
+use antlr_rust::tree::{ParseTree, ParseTreeListener};
 
 mod csvlexer;
 mod csvlistener;
@@ -24,39 +23,41 @@ struct CSV {
 
 struct Listener {
     csv: Box<CSV>,
-    add_to_header: bool,
-    row_to_add: Vec<String>,
 }
 
-impl ParseTreeListener for Listener {
-    fn visit_terminal(&mut self, _node: &TerminalNode) {}
-    fn visit_error_node(&mut self, _node: &ErrorNode) {}
-    fn enter_every_rule(&mut self, _ctx: &dyn ParserRuleContext) {}
-    fn exit_every_rule(&mut self, _ctx: &dyn ParserRuleContext) {}
+impl Listener {
+    fn hdr(&self, ctx: &HdrContextAll) -> Row {
+        let row_ctx = ctx.row().unwrap();
+        self.row(&row_ctx)
+    }
+
+    fn row(&self, ctx: &RowContextAll) -> Row {
+        let mut row = Row::new();
+        let field_ctx_list = ctx.field_all();
+        for (_i, field_ctx) in field_ctx_list.iter().enumerate() {
+            let field = self.field(&field_ctx);
+            row.push(field);
+        }
+        row
+    }
+
+    fn field(&self, ctx: &FieldContextAll) -> String {
+        ctx.get_text()
+    }
 }
+
+impl ParseTreeListener for Listener {}
 
 impl CSVListener for Listener {
-    fn enter_csvFile(&mut self, _ctx: &CsvFileContext) {}
-    fn exit_csvFile(&mut self, _ctx: &CsvFileContext) {}
-    fn enter_hdr(&mut self, _ctx: &HdrContext) {
-        self.add_to_header = true;
-    }
-    fn exit_hdr(&mut self, _ctx: &HdrContext) {
-        self.csv.header = self.row_to_add.to_vec();
-        self.row_to_add.clear();
-        self.add_to_header = false;
-    }
-    fn enter_row(&mut self, _ctx: &RowContext) {}
-    fn exit_row(&mut self, _ctx: &RowContext) {
-        if self.add_to_header {
-            return;
+    fn exit_csvFile(&mut self, ctx: &CsvFileContext) {
+        let hdr_ctx = ctx.hdr().unwrap();
+        let header = self.hdr(&hdr_ctx);
+        self.csv.header = header;
+        let row_ctx_list = ctx.row_all();
+        for (_i, row_ctx) in row_ctx_list.iter().enumerate() {
+            let row = self.row(&row_ctx);
+            self.csv.rows.push(row);
         }
-        self.csv.rows.push(self.row_to_add.to_vec());
-        self.row_to_add.clear();
-    }
-    fn enter_field(&mut self, _ctx: &FieldContext) {}
-    fn exit_field(&mut self, _ctx: &FieldContext) {
-        self.row_to_add.push(_ctx.get_text());
     }
 }
 
@@ -74,8 +75,6 @@ This, is, a, row
             header: Row::new(),
             rows: Vec::new(),
         }),
-        add_to_header: false,
-        row_to_add: Row::new(),
     }));
     let result = parser.csvFile();
     assert!(result.is_ok());
